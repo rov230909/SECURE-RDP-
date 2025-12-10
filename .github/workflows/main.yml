@@ -9,17 +9,17 @@ jobs:
     timeout-minutes: 4320
 
     steps:
-      - name: Tắt Password Policy + Bật RDP
+      - name: Tắt password policy + Bật RDP
         run: |
           secedit /export /cfg $env:TEMP\secpol.cfg
-          (Get-Content $env:TEMP\secpol.cfg) -replace "PasswordComplexity = 1", "PasswordComplexity = 0" | Out-File $env:TEMP\secpol.cfg
-          (Get-Content $env:TEMP\secpol.cfg) -replace "MinimumPasswordLength = \d+", "MinimumPasswordLength = 1" | Out-File $env:TEMP\secpol.cfg
+          (Get-Content $env:TEMP\secpol.cfg) -replace "PasswordComplexity = 1","PasswordComplexity = 0" | Out-File $env:TEMP\secpol.cfg
+          (Get-Content $env:TEMP\secpol.cfg) -replace "MinimumPasswordLength = \d+,"MinimumPasswordLength = 1" | Out-File $env:TEMP\secpol.cfg
           secedit /configure /db $env:WINDIR\security\local.sdb /cfg $env:TEMP\secpol.cfg /areas SECURITYPOLICY
-          Remove-Item $env:TEMP\secpol.cfg -Force
+          rm $env:TEMP\secpol.cfg -Force
 
           Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-          $p = 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
-          if(-not(Test-Path $p)){ New-Item $p -Force | Out-Null }
+          $p='HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
+          if(-not(Test-Path $p)){New-Item $p -Force|Out-Null}
           Set-ItemProperty $p -Name "UserAuthentication" -Value 0 -Force
 
           netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
@@ -32,60 +32,55 @@ jobs:
           MY_PASS: rov@2309
         run: |
           $p = ConvertTo-SecureString $env:MY_PASS -AsPlainText -Force
-          if(Get-LocalUser -Name $env:MY_USER -ErrorAction SilentlyContinue){ Remove-LocalUser -Name $env:MY_USER -Force }
-          New-LocalUser -Name $env:MY_USER -Password $p -AccountNeverExpires -PasswordNeverExpires -FullName "Rov" -Description "GitHub RDP"
+          if(Get-LocalUser -Name $env:MY_USER -EA SilentlyContinue){Remove-LocalUser -Name $env:MY_USER -Force}
+          New-LocalUser -Name $env:MY_USER -Password $p -AccountNeverExpires -PasswordNeverExpires
           Add-LocalGroupMember -Group "Administrators" -Member $env:MY_USER
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $env:MY_USER
 
-      - name: Cài Tailscale (chắc chắn thành công)
+      - name: Cài Tailscale (chắc chắn xong)
         run: |
-          $url = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
-          $out = "$env:TEMP\tailscale.msi"
-          Invoke-WebRequest $url -OutFile $out -UseBasicParsing
+          iwr https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi -OutFile "$env:TEMP\ts.msi"
+          Start-Process msiexec -ArgumentList '/i',"$env:TEMP\ts.msi",'/quiet','/norestart' -Wait
+          Start-Sleep -Seconds 12
+          del "$env:TEMP\ts.msi" -Force
 
-          # Chạy cài đặt và đợi thật chắc
-          Start-Process msiexec.exe -ArgumentList '/i', $out, '/quiet', '/norestart' -Wait -NoNewWindow
-
-          # Đợi thêm 10 giây cho chắc file exe xuất hiện
-          Start-Sleep -Seconds 10
-
-          Remove-Item $out -Force
-
-      - name: Khởi động Tailscale – IP cố định mãi mãi
+      - name: Khởi động Tailscale – IP cố định (đã sửa flag mới)
         run: |
           $ts = "C:\Program Files\Tailscale IPN\tailscale.exe"
-          if(!(Test-Path $ts)){ $ts = "C:\Program Files\Tailscale\tailscale.exe" }  # fallback
+          if(!(Test-Path $ts)){ $ts = "C:\Program Files\Tailscale\tailscale.exe" }
 
-          & $ts up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=rov-vps-forever --accept-risk=all
+          # Flag mới bắt buộc từ Tailscale v1.76+
+          & $ts up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=rov-vps-forever --accept-routes --unattended
 
-          # Đợi lấy IP (tối đa 30 lần = 90 giây)
-          for($i=0; $i -lt 30; $i++){
+          # Đợi IP thật chắc (tối đa 2 phút)
+          $ip = $null
+          for($i=0; $i -lt 40; $i++){
             $ip = & $ts ip -4 2>$null
             if($ip){
               echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
-              Write-Host "Tailscale IP: $ip (cố định mãi mãi)"
+              Write-Host "Tailscale IP: $ip (cố định vĩnh viễn)"
               break
             }
             Start-Sleep 3
           }
-          if(!$env:TAILSCALE_IP){ Write-Error "Không lấy được IP Tailscale"; exit 1 }
+          if(!$ip){ Write-Error "Vẫn không lấy được IP – nhưng 99% là do authkey sai"; exit 1 }
 
-      - name: Thông tin VPS + Keep Alive
+      - name: Thông tin + Keep Alive
         env:
           MY_USER: rov
         run: |
           Write-Host ""
           Write-Host "══════════════════════════════════════"
-          Write-Host "           VPS CHẠY THÀNH CÔNG"
+          Write-Host "       VPS ĐÃ CHẠY THÀNH CÔNG"
           Write-Host "══════════════════════════════════════"
-          Write-Host "IP cố định   → $env:TAILSCALE_IP"
-          Write-Host "Username     → $env:MY_USER"
-          Write-Host "Password     → rov@2309"
-          Write-Host "Lần sau chạy lại vẫn ra đúng IP này!"
+          Write-Host "IP cố định  → $env:TAILSCALE_IP"
+          Write-Host "Username    → $env:MY_USER"
+          Write-Host "Password    → rov@2309"
+          Write-Host "Lần sau bấm Run lại → vẫn IP này!"
           Write-Host "══════════════════════════════════════"
           Write-Host ""
 
           while($true){
-            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] VPS đang sống khỏe – IP không đổi"
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] VPS còn sống – IP không đổi"
             Start-Sleep 300
           }
