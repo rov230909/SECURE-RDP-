@@ -6,62 +6,66 @@ on:
 jobs:
   rdp:
     runs-on: windows-latest
-    timeout-minutes: 4320   # 12 tiếng tối đa (bạn có thể giảm nếu muốn)
+    timeout-minutes: 4320
 
     steps:
       - name: Configure RDP + Open Port 3389
         run: |
+          # Bật RDP
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
           
+          # Xóa rule cũ + tạo rule mới (đã sửa lỗi cú pháp)
           netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
-          netsh advfirewall firewall add rule name="RDP-Tailscale dir=in action=allow protocol=TCP localport=3389
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
           
-          Restart-Service TermService -Force
+          Restart-Service TermService -Force -ErrorAction SilentlyContinue
 
       - name: Create RDP User (password cố định rov@2309)
         env:
           MY_PASS: rov@2309
         run: |
-          $pass = ConvertTo-SecureString $env:MY_PASS -AsPlainText -Force
+          $securePass = ConvertTo-SecureString $env:MY_PASS -AsPlainText -Force
           
-          # Xóa user cũ nếu đã tồn tại (để rerun không lỗi)
+          # Xóa user cũ nếu có
           if (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue) {
-            Remove-LocalUser -Name "RDP"
+            Remove-LocalUser -Name "RDP" -Force
           }
           
-          New-LocalUser -Name "RDP" -Password $pass -AccountNeverExpires -PasswordNeverExpires
+          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires -PasswordNeverExpires
           Add-LocalGroupMember -Group "Administrators" -Member "RDP"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
 
       - name: Install Tailscale
         run: |
           iwr https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi -OutFile "$env:TEMP\tailscale.msi"
-          msiexec /i "$env:TEMP\tailscale.msi" /quiet /norestart
+          Start-Process msiexec.exe -Wait -ArgumentList '/i', "$env:TEMP\tailscale.msi", '/quiet', '/norestart'
           Remove-Item "$env:TEMP\tailscale.msi" -Force
 
       - name: Connect Tailscale
         run: |
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=rdp-$(Get-Random)
 
-          for($i=0; $i -lt 20; $i++) {
+          $ip = $null
+          for($i = 0; $i -lt 20; $i++) {
             $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4 2>$null
-            if($ip){ echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV; break }
-            Start-Sleep 3
+            if($ip) { break }
+            Start-Sleep -Seconds 3
           }
+          if(-not $ip) { Write-Error "Không lấy được IP Tailscale"; exit 1 }
+          echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
 
-      - name: Final Info & Keep Alive
+      - name: Show Info & Keep Alive
         run: |
-          Write-Host "`n════════════════════════════════════════"
-          Write-Host "          RDP ĐÃ SẴN SÀNG"
-          Write-Host "════════════════════════════════════════"
-          "
-          Write-Host "IP       → $env:TAILSCALE_IP"
-          Write-Host "User     → RDP"
-          Write-Host "Password → rov@2309"   # GitHub sẽ tự động **** trong log
-          Write-Host "════════════════════════════════════════`n"
+          Write-Host "`n════════════════════════════════════"
+          Write-Host "           RDP SẴN SÀNG RỒI"
+          Write-Host "════════════════════════════════════"
+          Write-Host "IP       : $env:TAILSCALE_IP"
+          Write-Host "Username : RDP"
+          Write-Host "Password : rov@2309"   # GitHub tự mask thành ****
+          Write-Host "════════════════════════════════════`n"
           
-          while($true){
-            Write-Host "[$(Get-Date -f 'HH:mm:ss')] Runner còn sống – Nhớ hủy workflow khi xong nhé!"
-            Start-Sleep 300
+          while($true) {
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Runner còn sống – Nhớ Cancel workflow khi xong!"
+            Start-Sleep -Seconds 300
           }
