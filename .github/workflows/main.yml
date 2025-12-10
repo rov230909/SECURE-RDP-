@@ -9,52 +9,63 @@ jobs:
     timeout-minutes: 4320
 
     steps:
-      - name: Configure RDP
+      - name: Configure RDP + Open Port 3389
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
+          
           netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
           netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
-          Restart-Service TermService -Force
+          
+          Restart-Service TermService -Force -ErrorAction SilentlyContinue
 
-      - name: Create User rov (password hợp lệ)
+      - name: Create User rov (password rov@2309)
         env:
-          MY_USER: rov
-          MY_PASS: Rov@23092025           # ← ĐÃ FIX LỖI PASSWORD POLICY
+          MY_USER: rov                   # ← đổi username ở đây
+          MY_PASS: rov@2309               # ← đổi password ở đây nếu muốn
         run: |
-          $p = ConvertTo-SecureString $env:MY_PASS -AsPlainText -Force
-          if (Get-LocalUser -Name $env:MY_USER -ErrorAction SilentlyContinue) { Remove-LocalUser -Name $env:MY_USER }
-          New-LocalUser -Name $env:MY_USER -Password $p -AccountNeverExpires -PasswordNeverExpires
+          $securePass = ConvertTo-SecureString $env:MY_PASS -AsPlainText -Force
+          
+          if (Get-LocalUser -Name $env:MY_USER -ErrorAction SilentlyContinue) {
+            Remove-LocalUser -Name $env:MY_USER -Force
+          }
+          
+          New-LocalUser -Name $env:MY_USER -Password $securePass -AccountNeverExpires -PasswordNeverExpires
           Add-LocalGroupMember -Group "Administrators" -Member $env:MY_USER
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $env:MY_USER
 
       - name: Install Tailscale
         run: |
-          iwr https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi -OutFile "$env:TEMP\ts.msi"
-          msiexec /i "$env:TEMP\ts.msi" /quiet /norestart | Out-Null
-          del "$env:TEMP\ts.msi" -Force
+          iwr https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi -OutFile "$env:TEMP\tailscale.msi"
+          Start-Process msiexec.exe -Wait -ArgumentList '/i', "$env:TEMP\tailscale.msi", '/quiet', '/norestart'
+          del "$env:TEMP\tailscale.msi" -Force
 
-      - name: Connect Tailscale – Dùng mãi 1 IP
+      - name: Connect Tailscale
         run: |
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=rov-vps-forever
-          for($i=0;$i -lt 30;$i++){
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=rov-rdp-$(Get-Random)
+          
+          $ip = $null
+          for($i=0; $i -lt 20; $i++) {
             $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4 2>$null
-            if($ip){ echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV; break }
-            Start-Sleep 3
+            if($ip){ break }
+            Start-Sleep -Seconds 3
           }
+          if(-not $ip){ Write-Error "Lấy IP Vps thất bại"; exit 1 }
+          echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
 
       - name: Show Info & Keep Alive
         env:
-          MY_USER: rov
+          MY_USER: rov                 
         run: |
-          Write-Host "`n════════════════════════════════════"
-          Write-Host "        VPS SẴN SÀNG – IP CỐ ĐỊNH"
-          Write-Host "════════════════════════════════════"
-          Write-Host "IP cố định → $env:TAILSCALE_IP"
-          Write-Host "Username   → $env:MY_USER"
-          Write-Host "Password   → Rov@23092025"
-          Write-Host "════════════════════════════════════`n"
+          Write-Host "`n════════════════════════════════"
+          Write-Host "       Tạo Vps Thành Công"
+          Write-Host "════════════════════════════════"
+          Write-Host "IP       : $env:TAIL_IP"
+          Write-Host "Username : $env:MY_USER"
+          Write-Host "Password : rov@2309"   
+          Write-Host "════════════════════════════════`n"
+          
           while($true){
-            Write-Host "[$(Get-Date -f HH:mm:ss)] Đang chạy ổn định – Cancel khi xong"
-            Start-Sleep 300
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] '''''''''''''''''''''''''''''''''''''''''''''Đang chạy"
+            Start-Sleep -Seconds 300
           }
