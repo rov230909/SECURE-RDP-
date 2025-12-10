@@ -9,51 +9,41 @@ jobs:
     timeout-minutes: 4320
 
     steps:
-      - name: Fix Registry + Enable RDP (không bao giờ lỗi nữa)
+      - name: Tắt Password Policy + Bật RDP
         run: |
-          # Bật Remote Desktop (luôn có key này)
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          secedit /export /cfg $env:TEMP\secpol.cfg
+          (Get-Content $env:TEMP\secpol.cfg) -replace "PasswordComplexity = 1", "PasswordComplexity = 0" | Out-File $env:TEMP\secpol.cfg
+          (Get-Content $env:TEMP\secpol.cfg) -replace "MinimumPasswordLength = \d+", "MinimumPasswordLength = 1" | Out-File $env:TEMP\secpol.cfg
+          secedit /configure /db $env:WINDIR\security\local.sdb /cfg $env:TEMP\secpol.cfg /areas SECURITYPOLICY
+          Remove-Item $env:TEMP\secpol.cfg -Force
 
-          # Tạo key WinStations\RDP-Tcp nếu chưa tồn tại (nguyên nhân lỗi của bạn)
-          $rdpPath = 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
-          if (-not (Test-Path $rdpPath)) {
-            New-Item -Path $rdpPath -Force | Out-Null
-            Write-Host "Đã tạo key RDP-Tcp bị thiếu"
-          }
+          Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          $p = 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
+          if(-not(Test-Path $p)){ New-Item $p -Force | Out-Null }
+          Set-ItemProperty $p -Name "UserAuthentication" -Value 0 -Force
 
-          # Bắt buộc tắt NLA + cho phép kết nối cũ (cần cho Tailscale)
-          Set-ItemProperty -Path $rdpPath -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path $rdpPath -Name "SecurityLayer" -Value 0 -Force   # 0 = RDP only, không TLS
-          Set-ItemProperty -Path $rdpPath -Name "PortNumber" -Value 3389 -Force
-
-          # Mở firewall
           netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
           netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service TermService -Force
 
-          # Restart service
-          Restart-Service TermService -Force -ErrorAction SilentlyContinue
-
-      - name: Tạo user rov (password rov@2309)
+      - name: Tạo user rov (dùng luôn pass rov@2309)
         env:
           MY_USER: rov
           MY_PASS: rov@2309
         run: |
           $p = ConvertTo-SecureString $env:MY_PASS -AsPlainText -Force
-          if (Get-LocalUser -Name $env:MY_USER -ErrorAction SilentlyContinue) { Remove-LocalUser -Name $env:MY_USER -Force }
+          if(Get-LocalUser -Name $env:MY_USER -ErrorAction SilentlyContinue){ Remove-LocalUser -Name $env:MY_USER -Force }
           New-LocalUser -Name $env:MY_USER -Password $p -AccountNeverExpires -PasswordNeverExpires
           Add-LocalGroupMember -Group "Administrators" -Member $env:MY_USER
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $env:MY_USER
 
-      - name: Cài Tailscale
+      - name: Cài & chạy Tailscale – IP cố định
         run: |
           iwr https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi -OutFile "$env:TEMP\ts.msi"
           msiexec /i "$env:TEMP\ts.msi" /quiet /norestart
-          del "$env:TEMP\ts.msi" -Force
+          del "$env:TEMP\ts.msi"
 
-      - name: Kết nối Tailscale – IP cố định mãi mãi
-        run: |
-          $name = "rov-vps-forever"   # đổi tên này 1 lần là giữ IP mãi
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=$name --accept-risk=all
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=rov-vps-forever --accept-risk=all
 
           for($i=0;$i -lt 25;$i++){
             $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4 2>$null
@@ -61,20 +51,17 @@ jobs:
             Start-Sleep 3
           }
 
-      - name: Thông tin VPS (giữ nguyên IP cũ khi rerun)
+      - name: Thông tin VPS
         env:
           MY_USER: rov
         run: |
-          Write-Host "`n════════════════════════════════"
-          Write-Host "     VPS HOẠT ĐỘNG ỔN ĐỊNH"
-          Write-Host "════════════════════════════════"
-          Write-Host "IP cố định  → $env:TAILSCALE_IP"
-          Write-Host "Username    → $env:MY_USER"
-          Write-Host "Password    → rov@2309"
-          Write-Host "Hostname    → rov-vps-forever"
-          Write-Host "════════════════════════════════`n"
+          Write-Host "`nVPS CHẠY THÀNH CÔNG 100%"
+          Write-Host "IP cố định : $env:TAILSCALE_IP"
+          Write-Host "User       : $env:MY_USER"
+          Write-Host "Pass       : rov@2309"
+          Write-Host "Lần sau chạy lại vẫn ra IP này!"
 
           while($true){
-            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] VPS còn sống – IP không đổi nữa!"
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] VPS đang sống khỏe"
             Start-Sleep 300
           }
