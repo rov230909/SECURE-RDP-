@@ -9,21 +9,21 @@ jobs:
     timeout-minutes: 4320
 
     steps:
-      - name: Configure RDP + Open Port
+      - name: Configure RDP
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
           netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
           netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
-          Restart-Service TermService -Force -ErrorAction SilentlyContinue
+          Restart-Service TermService -Force
 
-      - name: Create User rov
+      - name: Create User rov (password hợp lệ)
         env:
           MY_USER: rov
-          MY_PASS: rov@2309
+          MY_PASS: Rov@23092025           # ← ĐÃ FIX LỖI PASSWORD POLICY
         run: |
           $p = ConvertTo-SecureString $env:MY_PASS -AsPlainText -Force
-          if (Get-LocalUser -Name $env:MY_USER -ErrorAction SilentlyContinue) { Remove-LocalUser -Name $env:MY_USER -Force }
+          if (Get-LocalUser -Name $env:MY_USER -ErrorAction SilentlyContinue) { Remove-LocalUser -Name $env:MY_USER }
           New-LocalUser -Name $env:MY_USER -Password $p -AccountNeverExpires -PasswordNeverExpires
           Add-LocalGroupMember -Group "Administrators" -Member $env:MY_USER
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $env:MY_USER
@@ -34,13 +34,12 @@ jobs:
           msiexec /i "$env:TEMP\ts.msi" /quiet /norestart | Out-Null
           del "$env:TEMP\ts.msi" -Force
 
-      - name: Connect Tailscale – DÙNG MÃI 1 IP
+      - name: Connect Tailscale – Dùng mãi 1 IP
         run: |
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=rov-vps-cua-toi
-          
-          for($i=0; $i -lt 30; $i++) {
-            $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-            if($ip) { echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV; break }
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=rov-vps-forever
+          for($i=0;$i -lt 30;$i++){
+            $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4 2>$null
+            if($ip){ echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV; break }
             Start-Sleep 3
           }
 
@@ -48,15 +47,14 @@ jobs:
         env:
           MY_USER: rov
         run: |
-          Write-Host "`n══════════════════════════════════════"
-          Write-Host "    VPS ĐÃ SỐNG LẠI – DÙNG MÃI 1 IP"
-          Write-Host "══════════════════════════════════════"
+          Write-Host "`n════════════════════════════════════"
+          Write-Host "        VPS SẴN SÀNG – IP CỐ ĐỊNH"
+          Write-Host "════════════════════════════════════"
           Write-Host "IP cố định → $env:TAILSCALE_IP"
-          Write-Host "User       → $env:MY_USER"
-          Write-Host "Pass       → rov@2309"
-          Write-Host "══════════════════════════════════════`n"
-          
-          while($true) {
-            Write-Host "[$(Get-Date -f HH:mm:ss)] VPS đang chạy ngon – Cancel workflow khi xong"
+          Write-Host "Username   → $env:MY_USER"
+          Write-Host "Password   → Rov@23092025"
+          Write-Host "════════════════════════════════════`n"
+          while($true){
+            Write-Host "[$(Get-Date -f HH:mm:ss)] Đang chạy ổn định – Cancel khi xong"
             Start-Sleep 300
           }
