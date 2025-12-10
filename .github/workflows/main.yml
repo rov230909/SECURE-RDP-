@@ -9,63 +9,61 @@ jobs:
     timeout-minutes: 4320
 
     steps:
-      - name: Configure RDP + Open Port 3389
+      - name: Configure RDP + Open Port
         run: |
-          # Bật RDP
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
-          
-          # Xóa rule cũ + tạo rule mới (đã sửa lỗi cú pháp)
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControl\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
           netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
           netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
-          
           Restart-Service TermService -Force -ErrorAction SilentlyContinue
 
-      - name: Create RDP User (password cố định rov@2309)
+      - name: Create User rov
         env:
+          MY_USER: rov
           MY_PASS: rov@2309
         run: |
-          $securePass = ConvertTo-SecureString $env:MY_PASS -AsPlainText -Force
-          
-          # Xóa user cũ nếu có
-          if (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue) {
-            Remove-LocalUser -Name "RDP" -Force
-          }
-          
-          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires -PasswordNeverExpires
-          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+          $sec = ConvertTo-SecureString $env:MY_PASS -AsPlainText -Force
+          if (Get-LocalUser -Name $env:MY_USER -ErrorAction SilentlyContinue) { Remove-LocalUser -Name $env:MY_USER }
+          New-LocalUser -Name $env:MY_USER -Password $sec -AccountNeverExpires -PasswordNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member $env:MY_USER
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $env:MY_USER
 
       - name: Install Tailscale
         run: |
           iwr https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi -OutFile "$env:TEMP\tailscale.msi"
-          Start-Process msiexec.exe -Wait -ArgumentList '/i', "$env:TEMP\tailscale.msi", '/quiet', '/norestart'
-          Remove-Item "$env:TEMP\tailscale.msi" -Force
+          msiexec /i "$env:TEMP\tailscale.msi" /quiet /norestart
+          del "$env:TEMP\tailscale.msi" -Force
 
-      - name: Connect Tailscale
+      - name: Connect Tailscale – Dùng hostname cố định (QUAN TRỌNG NHẤT)
         run: |
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=rdp-$(Get-Random)
+          # ĐỔI CHỖ NÀY THÀNH TÊN BẠN MUỐN GIỮ MÃI MÃI
+          $fixedName = "rov-permanent-vps"     # đổi thành tên bạn thích, chỉ cần cố định
 
-          $ip = $null
-          for($i = 0; $i -lt 20; $i++) {
-            $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4 2>$null
-            if($ip) { break }
-            Start-Sleep -Seconds 3
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=$fixedName --accept-risk=all
+
+          # Lấy IP (sẽ là IP cũ nếu node cũ còn sống hoặc IP cố định theo hostname)
+          for($i=0; $i -lt 20; $i++){
+            $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+            if($ip){ echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV; break }
+            Start-Sleep 3
           }
-          if(-not $ip) { Write-Error "Không lấy được IP Tailscale"; exit 1 }
-          echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
 
       - name: Show Info & Keep Alive
+        env:
+          MY_USER: rov
         run: |
-          Write-Host "`n════════════════════════════════════"
-          Write-Host "           RDP SẴN SÀNG RỒI"
-          Write-Host "════════════════════════════════════"
-          Write-Host "IP       : $env:TAILSCALE_IP"
-          Write-Host "Username : RDP"
-          Write-Host "Password : rov@2309"   # GitHub tự mask thành ****
-          Write-Host "════════════════════════════════════`n"
+          Write-Host "`n══════════════════════════════════"
+          Write-Host "    VPS ĐÃ KHỞI ĐỘNG THÀNH CÔNG"
+          Write-Host "══════════════════════════════════"
+          Write-Host "IP cố định  : $env:TAILSCALE_IP"
+          Write-Host "Username    : $env:MY_USER"
+          Write-Host "Password    : rov@2309"
+          Write-Host "Hostname    : rov-permanent-vps"   # sẽ luôn là cái này
+          Write-Host "══════════════════════════════════`n"
+
+          Đang chạy"
           
-          while($true) {
-            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Runner còn sống – Nhớ Cancel workflow khi xong!"
-            Start-Sleep -Seconds 300
+          while($true){
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] VPS còn sống – IP không đổi nữa!"
+            Start-Sleep 300
           }
