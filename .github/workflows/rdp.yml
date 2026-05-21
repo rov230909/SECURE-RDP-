@@ -17,9 +17,9 @@ jobs:
           
           Restart-Service TermService -Force -ErrorAction SilentlyContinue
 
-      - name: 2. Tao User RDP moi (nguyenquangkhai / khai2003)
+      - name: 2. Tao User RDP moi (nguyenquangkhai / khai@2003)
         run: |
-          $securePass = ConvertTo-SecureString "khai2003" -AsPlainText -Force
+          $securePass = ConvertTo-SecureString "khai@2003" -AsPlainText -Force
           
           if (Get-LocalUser -Name "nguyenquangkhai" -ErrorAction SilentlyContinue) {
             Remove-LocalUser -Name "nguyenquangkhai" -Force
@@ -55,7 +55,7 @@ jobs:
           Write-Host "===================================="
           Write-Host "IP VPS   : $env:TAILSCALE_IP"
           Write-Host "Username : nguyenquangkhai"
-          Write-Host "Password : khai2003"
+          Write-Host "Password : khai@2003"
           Write-Host "====================================`n"
           
           while($true) {
