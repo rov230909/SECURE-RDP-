@@ -1,0 +1,64 @@
+name: RDP-GitHub
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp:
+    runs-on: windows-latest
+    timeout-minutes: 4320 # Cho phep chay toi da 3 ngay
+    steps:
+      - name: 1. Cau hinh RDP + Mo Port 3389
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
+          
+          netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
+          
+          Restart-Service TermService -Force -ErrorAction SilentlyContinue
+
+      - name: 2. Tao User RDP moi (nguyenquangkhai / khai2003)
+        run: |
+          $securePass = ConvertTo-SecureString "khai2003" -AsPlainText -Force
+          
+          if (Get-LocalUser -Name "nguyenquangkhai" -ErrorAction SilentlyContinue) {
+            Remove-LocalUser -Name "nguyenquangkhai" -Force
+          }
+          
+          New-LocalUser -Name "nguyenquangkhai" -Password $securePass -AccountNeverExpires -PasswordNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member "nguyenquangkhai"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "nguyenquangkhai"
+
+      - name: 3. Tai va Cai dat Tailscale
+        run: |
+          iwr https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi -OutFile "$env:TEMP\tailscale.msi"
+          Start-Process msiexec.exe -Wait -ArgumentList '/i', "$env:TEMP\tailscale.msi", '/quiet', '/norestart'
+          Remove-Item "$env:TEMP\tailscale.msi" -Force
+
+      - name: 4. Ket noi Tailscale
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=rdp-github-$(Get-Random)
+          
+          $ip = $null
+          for($i = 0; $i -lt 20; $i++) {
+            $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4 2>$null
+            if($ip) { break }
+            Start-Sleep -Seconds 3
+          }
+          if(-not $ip) { Write-Error "Khong lay duoc IP Tailscale"; exit 1 }
+          echo "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
+
+      - name: 5. Hien thi Thong tin & Giu VPS luon song
+        run: |
+          Write-Host "`n===================================="
+          Write-Host "  KHOI TAO VPS GITHUB THANH CONG"
+          Write-Host "===================================="
+          Write-Host "IP VPS   : $env:TAILSCALE_IP"
+          Write-Host "Username : nguyenquangkhai"
+          Write-Host "Password : khai2003"
+          Write-Host "====================================`n"
+          
+          while($true) {
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] VPS dang hoat dong on dinh..."
+            Start-Sleep -Seconds 300
+          }
